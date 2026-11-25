@@ -328,14 +328,22 @@ object Evidence {
 
     data class ExportResult(val name: String, val allVerified: Boolean, val checks: List<Check>)
 
+    fun exportPackage(context: Context, session: Library.Session, progress: (Float) -> Unit): ExportResult =
+        exportPackage(context, listOf(session), progress)
+
     /**
-     * Writes Download/<folder>/Evidence_<session>.zip with every piece, the
-     * record, a SHA256SUMS.txt and a short how-to-verify text. Every piece is
-     * fingerprinted again while it is copied and compared with the record.
+     * Writes one zip to Download/<folder>/ with every piece of every chosen
+     * recording, their evidence records, a SHA256SUMS.txt and a short
+     * how-to-verify text. One recording: its files at the top of the zip.
+     * Several: one folder per recording. Every piece is fingerprinted again
+     * while it is copied and compared with its record.
      */
-    fun exportPackage(context: Context, session: Library.Session, progress: (Float) -> Unit): ExportResult {
+    fun exportPackage(context: Context, sessions: List<Library.Session>, progress: (Float) -> Unit): ExportResult {
+        require(sessions.isNotEmpty())
         val cr = context.contentResolver
-        val zipName = "Evidence_${session.id}.zip"
+        val single = sessions.size == 1
+        val zipName = if (single) "Evidence_${sessions[0].id}.zip"
+            else "Evidence_${sessions.size}-recordings_${Times.fileStamp(System.currentTimeMillis())}.zip"
         val values = ContentValues().apply {
             put(MediaStore.MediaColumns.DISPLAY_NAME, zipName)
             put(MediaStore.MediaColumns.MIME_TYPE, "application/zip")
@@ -344,8 +352,7 @@ object Evidence {
         }
         val out = cr.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
             ?: throw IllegalStateException("Could not create the export file in Download/")
-        val expected = session.record?.pieceHashes() ?: emptyMap()
-        val total = session.pieces.sumOf { it.size }.coerceAtLeast(1)
+        val total = sessions.sumOf { s -> s.pieces.sumOf { it.size } }.coerceAtLeast(1)
         var done = 0L
         val checks = ArrayList<Check>()
         val sums = StringBuilder()
@@ -353,41 +360,45 @@ object Evidence {
             cr.openOutputStream(out, "w")!!.use { os ->
                 ZipOutputStream(os.buffered(1 shl 20)).use { zip ->
                     zip.setLevel(Deflater.NO_COMPRESSION) // video is already compressed
-                    for (p in session.pieces) {
-                        zip.putNextEntry(ZipEntry(p.name))
-                        val md = MessageDigest.getInstance("SHA-256")
-                        cr.openInputStream(p.uri)!!.use { input ->
-                            val buf = ByteArray(1 shl 20)
-                            while (true) {
-                                val n = input.read(buf)
-                                if (n < 0) break
-                                md.update(buf, 0, n)
-                                zip.write(buf, 0, n)
-                                done += n
-                                progress(done.toFloat() / total)
+                    for (session in sessions) {
+                        val dir = if (single) "" else "${session.id}/"
+                        val expected = session.record?.pieceHashes() ?: emptyMap()
+                        for (p in session.pieces) {
+                            val path = dir + p.name
+                            zip.putNextEntry(ZipEntry(path))
+                            val md = MessageDigest.getInstance("SHA-256")
+                            cr.openInputStream(p.uri)!!.use { input ->
+                                val buf = ByteArray(1 shl 20)
+                                while (true) {
+                                    val n = input.read(buf)
+                                    if (n < 0) break
+                                    md.update(buf, 0, n)
+                                    zip.write(buf, 0, n)
+                                    done += n
+                                    progress(done.toFloat() / total)
+                                }
+                            }
+                            zip.closeEntry()
+                            val actual = hex(md.digest())
+                            sums.append(actual).append("  ").append(path).append('\n')
+                            val want = expected[p.name]
+                            checks += when {
+                                want.isNullOrEmpty() -> Check(path, "no fingerprint on record", false)
+                                want == actual -> Check(path, "matches the record", true)
+                                else -> Check(path, "DOES NOT match the record", false)
                             }
                         }
-                        zip.closeEntry()
-                        val actual = hex(md.digest())
-                        sums.append(actual).append("  ").append(p.name).append('\n')
-                        val want = expected[p.name]
-                        checks += when {
-                            want.isNullOrEmpty() -> Check(p.name, "no fingerprint on record", false)
-                            want == actual -> Check(p.name, "matches the record", true)
-                            else -> Check(p.name, "DOES NOT match the record", false)
+                        session.record?.let { record ->
+                            zip.putNextEntry(ZipEntry("${dir}REC_${session.id}.json"))
+                            zip.write(record.publicJson().toString(2).toByteArray())
+                            zip.closeEntry()
                         }
-                    }
-                    val record = session.record
-                    if (record != null) {
-                        zip.putNextEntry(ZipEntry("REC_${session.id}.json"))
-                        zip.write(record.publicJson().toString(2).toByteArray())
-                        zip.closeEntry()
                     }
                     zip.putNextEntry(ZipEntry("SHA256SUMS.txt"))
                     zip.write(sums.toString().toByteArray())
                     zip.closeEntry()
                     zip.putNextEntry(ZipEntry("HOW_TO_VERIFY.txt"))
-                    zip.write(howToVerify(session, checks, record != null).toByteArray())
+                    zip.write(howToVerify(sessions, checks).toByteArray())
                     zip.closeEntry()
                 }
             }
@@ -396,23 +407,28 @@ object Evidence {
             try { cr.delete(out, null, null) } catch (_: Exception) {}
             throw e
         }
-        session.record?.let { r ->
-            r.addEvent(System.currentTimeMillis(), "Evidence package exported as Download/${Prefs.folder}/$zipName")
-            r.save(context)
+        val where = "Download/${Prefs.folder}/$zipName"
+        for (session in sessions) {
+            session.record?.let { r ->
+                r.addEvent(System.currentTimeMillis(), "Evidence package exported as $where")
+                r.save(context)
+            }
         }
-        return ExportResult("Download/${Prefs.folder}/$zipName", checks.all { it.ok }, checks)
+        return ExportResult(where, checks.all { it.ok }, checks)
     }
 
-    private fun howToVerify(session: Library.Session, checks: List<Check>, hasRecord: Boolean): String {
+    private fun howToVerify(sessions: List<Library.Session>, checks: List<Check>): String {
         val now = System.currentTimeMillis()
+        val single = sessions.size == 1
         return buildString {
             appendLine("QuickRecord evidence package")
-            appendLine("Session: ${session.id}")
+            appendLine(if (single) "Recording: ${sessions[0].id}" else "Recordings: ${sessions.joinToString(", ") { it.id }}")
             appendLine("Packed: ${Times.local(now)} (${Times.utc(now)})")
             appendLine()
             appendLine("What is inside")
-            appendLine("- The video or audio pieces of one recording, unchanged.")
-            if (hasRecord) appendLine("- REC_${session.id}.json: the evidence record written while recording (times, device, location, fingerprints).")
+            if (!single) appendLine("- One folder per recording, named by the date and time it started.")
+            appendLine("- The video or audio pieces of each recording, unchanged.")
+            appendLine("- REC_<recording>.json: the evidence record written while recording (times, device, location, fingerprints), where one exists.")
             appendLine("- SHA256SUMS.txt: the SHA-256 fingerprint of every piece, computed while this package was made.")
             appendLine()
             appendLine("Check when packing")
@@ -422,7 +438,7 @@ object Evidence {
             appendLine("A SHA-256 fingerprint changes completely if even one byte of a file changes.")
             appendLine("Linux / macOS:  sha256sum -c SHA256SUMS.txt   (macOS: shasum -a 256 -c SHA256SUMS.txt)")
             appendLine("Windows (PowerShell):  Get-FileHash <file> -Algorithm SHA256")
-            if (hasRecord) appendLine("Then compare each value with \"sha256\" for the same file in REC_${session.id}.json.")
+            appendLine("Then compare each value with \"sha256\" for the same file in its REC_<recording>.json.")
         }
     }
 }

@@ -250,6 +250,7 @@ class Gesture(private val context: Context, private val onTrigger: () -> Unit) {
             "down2" -> last(2, ButtonService.DOWN)
             "up2" -> last(2, ButtonService.UP)
             "up3" -> last(3, ButtonService.UP)
+            "either3" -> last(3, ButtonService.UP) || last(3, ButtonService.DOWN)
             "both" -> presses.size >= 2 && presses.takeLast(2).let { (a, b) ->
                 a.first != b.first && b.second - a.second <= BOTH_GAP_MS
             }

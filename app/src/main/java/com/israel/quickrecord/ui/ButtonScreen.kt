@@ -114,6 +114,7 @@ fun ButtonScreen(onBack: () -> Unit) {
                     Triple("down3", "Volume Down 3 times", "Three quick presses. Hard to do by accident. Recommended."),
                     Triple("down2", "Volume Down 2 times", "Faster, but easy to do by accident when turning the volume down."),
                     Triple("up3", "Volume Up 3 times", "Three quick presses of Volume Up."),
+                    Triple("either3", "Either button 3 times", "Three quick presses of Volume Up, or three of Volume Down: whichever is easier to reach. Mixing them doesn't count."),
                     Triple("up2", "Volume Up 2 times", "Faster, easier to do by accident."),
                     Triple("both", "Up and Down together", "Press both within a moment of each other. Very hard to do by accident."),
                 )) {
