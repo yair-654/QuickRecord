@@ -89,9 +89,9 @@ Android only lets an app put video files in `Movies/`, so the evidence records a
 
 File names look like `VID_20261125_220512_p01.mp4`: the date and time recording started, then the piece number.
 
-### About dates and times
+Dates and times
 
-The video format stores its date in UTC, and Android writes the moment the file was closed, which is the end of the piece. Many players show that raw value, so in Israel a video can look 2–3 hours early.
+Each file's date in the gallery is the moment that piece began. Its evidence record lists every start and end time twice: in UTC and in the phone's local time with its offset, for example 2026-11-25T22:05:12+02:00. It also records the time zone and whether the phone's clock was set automatically. Recordings are never altered after they are sealed.
 
 QuickRecord never changes the video to "fix" this. Instead:
 - each file's gallery date is set to when it started;
