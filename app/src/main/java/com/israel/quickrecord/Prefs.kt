@@ -8,8 +8,8 @@ import androidx.compose.runtime.setValue
 
 /**
  * Every user setting, with its default. Settings live in their own file so
- * "Reset settings" can clear them without touching recordings, protected
- * marks, titles or the problems log (those live in [AppState]).
+ * "Reset settings" can clear them without touching recordings, titles or
+ * the problems log.
  *
  * [version] changes on every write, so Compose screens that read it redraw.
  */
@@ -34,9 +34,12 @@ object Prefs {
         old.edit().remove("custom_folder").apply()
     }
 
-    private fun str(key: String, def: String) = sp.getString(key, def) ?: def
-    private fun int(key: String, def: Int) = sp.getInt(key, def)
-    private fun bool(key: String, def: Boolean) = sp.getBoolean(key, def)
+    // Every read also reads [version], so any screen showing a setting
+    // redraws the moment it changes (not only after switching screens).
+    private fun str(key: String, def: String): String { touch(); return sp.getString(key, def) ?: def }
+    private fun int(key: String, def: Int): Int { touch(); return sp.getInt(key, def) }
+    private fun bool(key: String, def: Boolean): Boolean { touch(); return sp.getBoolean(key, def) }
+    private fun touch() { version.hashCode() }
     private fun put(block: SharedPreferences.Editor.() -> Unit) {
         sp.edit().apply(block).apply()
         version++
@@ -117,7 +120,7 @@ object Prefs {
         set(v) = put { putBoolean("vibration", v) }
 
     // ---- Button ----
-    /** "down3", "down2", "up3", "up2" or "both". */
+    /** "down3", "down2", "up3", "up2", "either3" or "both". */
     var gesture: String
         get() = str("gesture", "down3")
         set(v) = put { putString("gesture", v) }
@@ -174,8 +177,7 @@ object Prefs {
 }
 
 /**
- * Things the app remembers that are not settings: protected recordings,
- * titles, whether the tile was added, the test mode of the button screen.
+ * Things the app remembers that are not settings: whether the tile was added.
  */
 object AppState {
     private lateinit var sp: SharedPreferences
@@ -190,16 +192,7 @@ object AppState {
     private fun bump() { version++ }
 
     var tileAdded: Boolean
-        get() = sp.getBoolean("tile_added", false)
+        get() { version.hashCode(); return sp.getBoolean("tile_added", false) }
         set(v) { sp.edit().putBoolean("tile_added", v).apply(); bump() }
 
-    fun isProtected(sessionId: String) =
-        sp.getStringSet("protected", emptySet())!!.contains(sessionId)
-
-    fun setProtected(sessionId: String, value: Boolean) {
-        val set = sp.getStringSet("protected", emptySet())!!.toMutableSet()
-        if (value) set.add(sessionId) else set.remove(sessionId)
-        sp.edit().putStringSet("protected", set).apply()
-        bump()
-    }
 }

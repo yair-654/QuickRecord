@@ -1,6 +1,8 @@
 package com.israel.quickrecord.ui
 
 import android.Manifest
+import android.content.Intent
+import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Column
@@ -28,6 +30,9 @@ import com.israel.quickrecord.ErrorLog
 import com.israel.quickrecord.Prefs
 import com.israel.quickrecord.R
 import com.israel.quickrecord.Sizes
+
+/** Where "Report a problem" goes. */
+private const val ISSUES_URL = "https://github.com/yair-654/yairs-kav-extensions/issues"
 
 /** Which choice dialog is open. */
 private enum class Pick { CAMERA, RES, FPS, QUALITY, CODEC, PIECE, AUTOSTOP, MINFREE, BATTERY }
@@ -73,7 +78,12 @@ fun SettingsScreen(pad: PaddingValues, openButton: () -> Unit, openLog: () -> Un
 
         SectionTitle("Sound")
         Panel {
-            SwitchRow(R.drawable.ic_mic, "Record sound", "Off records silent video.", Prefs.sound, { Prefs.sound = it })
+            SwitchRow(
+                R.drawable.ic_mic, "Record sound",
+                if (Prefs.sound) "On: videos include sound from the microphone. If the camera isn't allowed or can't start, QuickRecord records sound only."
+                else "Off: videos are silent and the microphone is never used. With the camera not allowed, nothing can be recorded.",
+                Prefs.sound, { Prefs.sound = it },
+            )
         }
 
         SectionTitle("Saving")
@@ -110,6 +120,13 @@ fun SettingsScreen(pad: PaddingValues, openButton: () -> Unit, openLog: () -> Un
         SectionTitle("Help")
         Panel {
             NavRow(R.drawable.ic_warning, "Problems log", if (ErrorLog.entries.isEmpty()) "Nothing logged" else "${ErrorLog.entries.size} entries", onClick = openLog)
+            NavRow(R.drawable.ic_bug, "Report a problem", "Opens QuickRecord's issues page on GitHub") {
+                try {
+                    ctx.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(ISSUES_URL)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                } catch (_: Exception) {
+                    ErrorLog.notice("No browser is installed. The issues page is $ISSUES_URL")
+                }
+            }
             NavRow(R.drawable.ic_reset, "Reset settings", "Back to the recommended settings. Recordings are not touched.") { confirmReset = true }
         }
 
@@ -198,7 +215,7 @@ fun SettingsScreen(pad: PaddingValues, openButton: () -> Unit, openLog: () -> Un
     if (confirmReset) {
         ConfirmDialog(
             "Reset settings?",
-            "Every setting goes back to its recommended value, including the button gesture and the screen-off switch. Recordings, evidence records, protected marks and the problems log are not touched.",
+            "Every setting goes back to its recommended value, including the button gesture and the screen-off switch. Recordings, evidence records and the problems log are not touched.",
             "Reset",
             onConfirm = {
                 Prefs.resetAll()
@@ -231,6 +248,7 @@ fun gestureLabel(g: String) = when (g) {
     "down2" -> "Press Volume Down 2 times"
     "up3" -> "Press Volume Up 3 times"
     "up2" -> "Press Volume Up 2 times"
+    "either3" -> "Press either volume button 3 times"
     "both" -> "Press Volume Up and Down together"
     else -> "Press Volume Down 3 times"
 }

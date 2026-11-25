@@ -184,25 +184,26 @@ object Library {
     // ---- Delete ----
 
     /**
-     * Deletes the session's files and records. Returns a system confirmation
-     * to show for files Android no longer counts as ours (for example after a
-     * reinstall), or null when everything is gone already.
+     * Deletes the sessions' files and records. Returns one system
+     * confirmation for any files Android no longer counts as ours (for
+     * example after a reinstall), or null when everything is gone already.
      */
-    fun delete(context: Context, session: Session): PendingIntent? {
+    fun delete(context: Context, sessions: List<Session>): PendingIntent? {
         val cr = context.contentResolver
         val needConfirm = ArrayList<Uri>()
-        for (p in session.pieces) {
-            try {
-                cr.delete(p.uri, null, null)
-            } catch (_: SecurityException) {
-                needConfirm += p.uri
-            } catch (e: Exception) {
-                ErrorLog.problem("Could not delete ${p.name}: ${e.message}", e)
+        for (session in sessions) {
+            for (p in session.pieces) {
+                try {
+                    cr.delete(p.uri, null, null)
+                } catch (_: SecurityException) {
+                    needConfirm += p.uri
+                } catch (e: Exception) {
+                    ErrorLog.problem("Could not delete ${p.name}: ${e.message}", e)
+                }
             }
+            session.record?.deletePublic(context)
+            SessionRecord.deleteLocal(context, session.id)
         }
-        session.record?.deletePublic(context)
-        SessionRecord.deleteLocal(context, session.id)
-        AppState.setProtected(session.id, false)
         return if (needConfirm.isEmpty()) null else MediaStore.createDeleteRequest(cr, needConfirm)
     }
 

@@ -1,7 +1,17 @@
-@file:OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
+@file:OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class, ExperimentalFoundationApi::class)
 
 package com.israel.quickrecord.ui
 
+import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material3.Surface
+import androidx.compose.runtime.mutableStateListOf
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
 import android.Manifest
 import android.content.ClipData
 import android.content.Context
@@ -33,6 +43,7 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
@@ -95,7 +106,14 @@ fun RecordingsScreen(pad: PaddingValues) {
     var open by remember { mutableStateOf<Library.Session?>(null) }
     var job by remember { mutableStateOf<Job?>(null) }
     var renaming by remember { mutableStateOf<Library.Session?>(null) }
-    var deleting by remember { mutableStateOf<Library.Session?>(null) }
+    var deleting by remember { mutableStateOf<List<Library.Session>?>(null) }
+
+    // Selection: long-press a recording to start, tap to add or remove more.
+    val selected = remember { mutableStateListOf<String>() }
+    val selecting = selected.isNotEmpty()
+    BackHandler(enabled = selecting) { selected.clear() }
+    val chosen = sessions?.filter { it.id in selected } ?: emptyList()
+    fun toggle(id: String) { if (id in selected) selected.remove(id) else selected.add(id) }
 
     val deleteConfirm = rememberLauncherForActivityResult(ActivityResultContracts.StartIntentSenderForResult()) { reload++ }
     val mediaPerm = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { reload++ }
@@ -116,53 +134,114 @@ fun RecordingsScreen(pad: PaddingValues) {
         }
     }
 
-    LazyColumn(
-        Modifier.fillMaxSize().padding(pad),
-        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 24.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
-    ) {
-        item {
-            Text("Recordings", style = MaterialTheme.typography.headlineMedium, modifier = Modifier.padding(horizontal = 8.dp))
-            val list = sessions
-            if (list != null) {
-                Text(
-                    if (list.isEmpty()) "Nothing recorded yet"
-                    else "${list.size} recording${if (list.size == 1) "" else "s"} · ${Sizes.bytes(list.sumOf { it.totalBytes })}",
-                    style = MaterialTheme.typography.bodyLarge,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(horizontal = 8.dp),
-                )
-            }
+    fun export(list: List<Library.Session>) = runJob(Job("Export")) { progress ->
+        val r = Evidence.exportPackage(ctx, list, progress)
+        val lines = r.checks.joinToString("\n") { "• ${it.file}: ${it.result}" }
+        Pair("Saved to ${r.name}\n\n$lines", r.allVerified)
+    }
+
+    fun verify(list: List<Library.Session>) = runJob(Job("Verify")) { progress ->
+        val total = list.sumOf { it.totalBytes }.coerceAtLeast(1).toFloat()
+        var before = 0L
+        val lines = ArrayList<String>()
+        var allOk = true
+        for (s in list) {
+            val share = s.totalBytes / total
+            val start = before / total
+            val checks = Evidence.verify(ctx, s) { p -> progress(start + p * share) }
+            before += s.totalBytes
+            if (list.size > 1) lines += (s.title ?: Times.nice(s.startedMs))
+            checks.forEach { lines += "• ${it.file}: ${it.result}" }
+            if (!checks.all { it.ok }) allOk = false
         }
-        if (!ctx.granted(Manifest.permission.READ_MEDIA_VIDEO)) {
+        Pair(lines.joinToString("\n"), allOk)
+    }
+
+    Box(Modifier.fillMaxSize().padding(pad)) {
+        LazyColumn(
+            Modifier.fillMaxSize(),
+            contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 24.dp, bottom = if (selecting) 170.dp else 24.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
             item {
-                Panel(color = MaterialTheme.colorScheme.secondaryContainer) {
-                    Column(Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
-                        Text("Missing older recordings?", style = MaterialTheme.typography.titleSmall)
+                val list = sessions
+                if (selecting) {
+                    Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Text("${selected.size} selected", style = MaterialTheme.typography.headlineMedium, modifier = Modifier.weight(1f))
+                        if (list != null && selected.size < list.size) {
+                            TextButton(onClick = { selected.clear(); selected.addAll(list.map { it.id }) }) { Text("Select all") }
+                        }
+                        TextButton(onClick = { selected.clear() }) { Text("Cancel") }
+                    }
+                } else {
+                    Text("Recordings", style = MaterialTheme.typography.headlineMedium, modifier = Modifier.padding(horizontal = 8.dp))
+                    if (list != null) {
                         Text(
-                            "After QuickRecord is reinstalled, Android no longer shows it the recordings it made before. Allow access to see them here again. Not needed otherwise.",
-                            style = MaterialTheme.typography.bodySmall,
+                            if (list.isEmpty()) "Nothing recorded yet"
+                            else "${list.size} recording${if (list.size == 1) "" else "s"} · ${Sizes.bytes(list.sumOf { it.totalBytes })}",
+                            style = MaterialTheme.typography.bodyLarge,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(horizontal = 8.dp),
                         )
-                        TextButton(onClick = {
-                            mediaPerm.launch(arrayOf(Manifest.permission.READ_MEDIA_VIDEO, Manifest.permission.READ_MEDIA_AUDIO))
-                        }) { Text("Allow access") }
+                        if (list.size > 1) {
+                            Text(
+                                "Tip: press and hold a recording to select several.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
+                            )
+                        }
                     }
                 }
             }
-        }
-        val list = sessions
-        if (list == null) {
-            item { Box(Modifier.fillMaxWidth().padding(48.dp), contentAlignment = Alignment.Center) { CircularProgressIndicator() } }
-        } else if (list.isEmpty()) {
-            item {
-                Column(Modifier.fillMaxWidth().padding(top = 64.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                    Ico(R.drawable.ic_library, size = 56, tint = MaterialTheme.colorScheme.outline)
-                    Gap()
-                    Text("Your recordings will appear here.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+            if (!selecting && !ctx.granted(Manifest.permission.READ_MEDIA_VIDEO)) {
+                item {
+                    Panel(color = MaterialTheme.colorScheme.secondaryContainer) {
+                        Column(Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
+                            Text("Missing older recordings?", style = MaterialTheme.typography.titleSmall)
+                            Text(
+                                "After QuickRecord is reinstalled, Android no longer shows it the recordings it made before. Allow access to see them here again. Not needed otherwise.",
+                                style = MaterialTheme.typography.bodySmall,
+                            )
+                            TextButton(onClick = {
+                                mediaPerm.launch(arrayOf(Manifest.permission.READ_MEDIA_VIDEO, Manifest.permission.READ_MEDIA_AUDIO))
+                            }) { Text("Allow access") }
+                        }
+                    }
                 }
             }
-        } else {
-            items(list, key = { it.id }) { s -> SessionCard(s) { open = s } }
+            val list = sessions
+            if (list == null) {
+                item { Box(Modifier.fillMaxWidth().padding(48.dp), contentAlignment = Alignment.Center) { CircularProgressIndicator() } }
+            } else if (list.isEmpty()) {
+                item {
+                    Column(Modifier.fillMaxWidth().padding(top = 64.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                        Ico(R.drawable.ic_library, size = 56, tint = MaterialTheme.colorScheme.outline)
+                        Gap()
+                        Text("Your recordings will appear here.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
+            } else {
+                items(list, key = { it.id }) { s ->
+                    SessionCard(
+                        s,
+                        isSelected = s.id in selected,
+                        selecting = selecting,
+                        onClick = { if (selecting) toggle(s.id) else open = s },
+                        onLongClick = { toggle(s.id) },
+                    )
+                }
+            }
+        }
+
+        if (selecting) {
+            SelectionBar(
+                Modifier.align(Alignment.BottomCenter),
+                onExport = { export(chosen) },
+                onVerify = { verify(chosen) },
+                onShare = { share(ctx, chosen) },
+                onDelete = { deleting = chosen },
+            )
         }
     }
 
@@ -170,22 +249,10 @@ fun RecordingsScreen(pad: PaddingValues) {
         SessionSheet(
             s,
             onDismiss = { open = null },
-            onExport = {
-                runJob(Job("Export")) { progress ->
-                    val r = Evidence.exportPackage(ctx, s, progress)
-                    val lines = r.checks.joinToString("\n") { "• ${it.file}: ${it.result}" }
-                    Pair("Saved to ${r.name}\n\n$lines", r.allVerified)
-                }
-            },
-            onVerify = {
-                runJob(Job("Verify")) { progress ->
-                    val checks = Evidence.verify(ctx, s, progress)
-                    Pair(checks.joinToString("\n") { "• ${it.file}: ${it.result}" }, checks.all { it.ok })
-                }
-            },
+            onExport = { export(listOf(s)) },
+            onVerify = { verify(listOf(s)) },
             onRename = { renaming = s },
-            onProtect = { AppState.setProtected(s.id, !AppState.isProtected(s.id)) },
-            onDelete = { deleting = s },
+            onDelete = { deleting = listOf(s) },
         )
     }
 
@@ -205,7 +272,9 @@ fun RecordingsScreen(pad: PaddingValues) {
                     }
                 }
             },
-            confirmButton = { if (j.result != null) TextButton(onClick = { job = null }) { Text("OK") } },
+            confirmButton = {
+                if (j.result != null) TextButton(onClick = { job = null; selected.clear() }) { Text("OK") }
+            },
         )
     }
 
@@ -239,32 +308,27 @@ fun RecordingsScreen(pad: PaddingValues) {
         )
     }
 
-    deleting?.let { s ->
-        val protected = AppState.isProtected(s.id)
-        var typed by remember(s.id) { mutableStateOf("") }
+    deleting?.let { list ->
+        val files = list.sumOf { it.pieces.size }
+        val bytes = list.sumOf { it.totalBytes }
         AlertDialog(
             onDismissRequest = { deleting = null },
-            title = { Text(if (protected) "Delete a protected recording?" else "Delete this recording?") },
+            title = {
+                Text(if (list.size > 1) "Delete ${list.size} recordings?" else "Delete this recording?")
+            },
             text = {
-                Column {
-                    Text(
-                        "This deletes ${s.pieces.size} file${if (s.pieces.size == 1) "" else "s"} (${Sizes.bytes(s.totalBytes)}) and its evidence record. It can't be undone." +
-                            if (protected) "\n\nThis recording is protected. Type DELETE to confirm." else ""
-                    )
-                    if (protected) {
-                        Gap()
-                        OutlinedTextField(value = typed, onValueChange = { typed = it }, singleLine = true, label = { Text("Type DELETE") })
-                    }
-                }
+                Text(
+                    "This deletes $files file${if (files == 1) "" else "s"} (${Sizes.bytes(bytes)}) and ${if (list.size == 1) "its evidence record" else "their evidence records"}. It can't be undone."
+                )
             },
             confirmButton = {
                 TextButton(
-                    enabled = !protected || typed.trim() == "DELETE",
                     onClick = {
                         deleting = null
                         open = null
+                        selected.clear()
                         scope.launch {
-                            val confirm = withContext(Dispatchers.IO) { Library.delete(ctx, s) }
+                            val confirm = withContext(Dispatchers.IO) { Library.delete(ctx, list) }
                             if (confirm != null) deleteConfirm.launch(IntentSenderRequest.Builder(confirm.intentSender).build())
                             reload++
                         }
@@ -273,6 +337,34 @@ fun RecordingsScreen(pad: PaddingValues) {
             },
             dismissButton = { TextButton(onClick = { deleting = null }) { Text("Cancel") } },
         )
+    }
+}
+
+/** The actions for the selected recordings, floating at the bottom. */
+@Composable
+private fun SelectionBar(
+    modifier: Modifier,
+    onExport: () -> Unit,
+    onVerify: () -> Unit,
+    onShare: () -> Unit,
+    onDelete: () -> Unit,
+) {
+    Surface(
+        modifier = modifier.fillMaxWidth().padding(12.dp),
+        shape = MaterialTheme.shapes.large,
+        color = MaterialTheme.colorScheme.surfaceContainerHighest,
+        shadowElevation = 6.dp,
+    ) {
+        FlowRow(
+            Modifier.padding(12.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            FilledTonalButton(onClick = onExport) { BtnContent(R.drawable.ic_download, "Export evidence") }
+            FilledTonalButton(onClick = onShare) { BtnContent(R.drawable.ic_share, "Share") }
+            OutlinedButton(onClick = onVerify) { BtnContent(R.drawable.ic_shield, "Verify") }
+            OutlinedButton(onClick = onDelete) { BtnContent(R.drawable.ic_delete, "Delete") }
+        }
     }
 }
 
@@ -295,11 +387,34 @@ private fun Thumb(piece: Library.Piece?, modifier: Modifier) {
 }
 
 @Composable
-private fun SessionCard(s: Library.Session, onClick: () -> Unit) {
-    AppState.version
-    Panel(Modifier.clip(MaterialTheme.shapes.large).clickable(onClick = onClick)) {
+private fun SessionCard(
+    s: Library.Session,
+    isSelected: Boolean,
+    selecting: Boolean,
+    onClick: () -> Unit,
+    onLongClick: () -> Unit,
+) {
+    val haptics = LocalHapticFeedback.current
+    Panel(
+        Modifier.clip(MaterialTheme.shapes.large).combinedClickable(
+            onClick = onClick,
+            onLongClick = { haptics.performHapticFeedback(HapticFeedbackType.LongPress); onLongClick() },
+        ),
+        color = if (isSelected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainer,
+    ) {
         Row(Modifier.padding(horizontal = 12.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-            Thumb(s.pieces.firstOrNull(), Modifier.width(120.dp).aspectRatio(16f / 9f))
+            Box {
+                Thumb(s.pieces.firstOrNull(), Modifier.width(120.dp).aspectRatio(16f / 9f))
+                if (selecting) {
+                    Box(
+                        Modifier.padding(6.dp).size(24.dp).clip(CircleShape)
+                            .background(if (isSelected) MaterialTheme.colorScheme.primary else Color.Black.copy(alpha = 0.35f)),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        if (isSelected) Ico(R.drawable.ic_check, size = 24, tint = MaterialTheme.colorScheme.onPrimary)
+                    }
+                }
+            }
             RowGap(14)
             Column(Modifier.weight(1f)) {
                 Text(
@@ -319,7 +434,6 @@ private fun SessionCard(s: Library.Session, onClick: () -> Unit) {
                 )
                 FlowRow(Modifier.padding(top = 6.dp), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     if (s.isAudio) Tag("Sound only", icon = R.drawable.ic_audio)
-                    if (AppState.isProtected(s.id)) Tag("Protected", icon = R.drawable.ic_lock)
                     if (s.hasFingerprints) Tag("Fingerprinted", OkGreen, R.drawable.ic_shield)
                     if (s.wasInterrupted) Tag("Cut off", WarnAmber, R.drawable.ic_warning)
                 }
@@ -335,12 +449,10 @@ private fun SessionSheet(
     onExport: () -> Unit,
     onVerify: () -> Unit,
     onRename: () -> Unit,
-    onProtect: () -> Unit,
     onDelete: () -> Unit,
 ) {
     val ctx = LocalContext.current
     AppState.version
-    val protected = AppState.isProtected(s.id)
     val record = s.record
     ModalBottomSheet(onDismissRequest = onDismiss, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
         Column(Modifier.verticalScroll(rememberScrollState()).padding(horizontal = 20.dp).padding(bottom = 32.dp)) {
@@ -362,14 +474,8 @@ private fun SessionSheet(
                 FilledTonalButton(onClick = onExport) { BtnContent(R.drawable.ic_download, "Export evidence") }
                 OutlinedButton(onClick = onVerify) { BtnContent(R.drawable.ic_shield, "Verify") }
                 OutlinedButton(onClick = onRename) { BtnContent(R.drawable.ic_edit, "Rename") }
-                OutlinedButton(onClick = onProtect) { BtnContent(R.drawable.ic_lock, if (protected) "Unprotect" else "Protect") }
                 OutlinedButton(onClick = onDelete) { BtnContent(R.drawable.ic_delete, "Delete") }
             }
-            if (protected) {
-                Gap(8)
-                Text("Protected: QuickRecord asks you to type DELETE before deleting it.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
-
             Gap(20)
             Text("Details", style = MaterialTheme.typography.titleMedium)
             Gap(4)
@@ -404,30 +510,55 @@ private fun SessionSheet(
             Gap(20)
             Text("Files", style = MaterialTheme.typography.titleMedium)
             val hashes = record?.pieceHashes() ?: emptyMap()
+            Text(
+                "Tap a file to open its folder in the Files app. ▶ plays it.",
+                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
             for (p in s.pieces) {
                 Row(
-                    Modifier.fillMaxWidth().clip(MaterialTheme.shapes.small).clickable { play(ctx, p) }.padding(vertical = 10.dp),
+                    Modifier.fillMaxWidth().clip(MaterialTheme.shapes.small).clickable { openFolder(ctx, p.folder) }.padding(vertical = 10.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     IconBadge(if (p.isVideo) R.drawable.ic_videocam else R.drawable.ic_audio)
                     RowGap(12)
                     Column(Modifier.weight(1f)) {
-                        Text(p.name, style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text(p.name, style = MaterialTheme.typography.bodyMedium)
                         Text(
-                            "${p.folder} · ${if (p.durationMs > 0) Times.duration(p.durationMs) + " · " else ""}${Sizes.bytes(p.size)}",
+                            "Internal storage/${p.folder.trimEnd('/')}/",
+                            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        Text(
+                            "${if (p.durationMs > 0) Times.duration(p.durationMs) + " · " else ""}${Sizes.bytes(p.size)}",
                             style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                         hashes[p.name]?.takeIf { it.isNotEmpty() }?.let { h ->
                             Text("SHA-256 ${h.take(16)}…", style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                     }
-                    Ico(R.drawable.ic_play, size = 20)
+                    IconButton(onClick = { play(ctx, p) }) { Ico(R.drawable.ic_play, tint = MaterialTheme.colorScheme.primary) }
                 }
             }
             if (record != null) {
+                val recPath = remember(record) { recordFolder(record) }
                 Gap(8)
+                Row(
+                    Modifier.fillMaxWidth().clip(MaterialTheme.shapes.small)
+                        .clickable(enabled = recPath != null) { recPath?.let { openFolder(ctx, it) } }
+                        .padding(vertical = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    IconBadge(R.drawable.ic_shield, OkGreen)
+                    RowGap(12)
+                    Column(Modifier.weight(1f)) {
+                        Text("REC_${s.id}.json (evidence record)", style = MaterialTheme.typography.bodyMedium)
+                        Text(
+                            if (recPath != null) "Internal storage/$recPath/" else "Kept inside the app only",
+                            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
                 Text(
-                    "The evidence record is also saved as Documents/…/REC_${s.id}.json.",
+                    "The evidence record is a small text file written while recording: when it started and ended, where, with which phone and settings, and the fingerprint of every file, which proves the files haven't changed since. Android doesn't allow it in the same folder as videos, so it's kept apart. \"Export evidence\" puts them together in one zip.",
                     style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
@@ -450,6 +581,37 @@ private fun DetailRow(key: String, value: String) {
     }
 }
 
+/** Where the public copy of the evidence record is, like "Documents/QuickRecord". */
+private fun recordFolder(record: com.israel.quickrecord.SessionRecord): String? {
+    val ctx = com.israel.quickrecord.App.instance
+    val uri = record.publicUri ?: return null
+    return try {
+        ctx.contentResolver.query(uri, arrayOf(android.provider.MediaStore.MediaColumns.RELATIVE_PATH), null, null, null)?.use { c ->
+            if (c.moveToFirst()) c.getString(0)?.trimEnd('/') else null
+        }
+    } catch (_: Exception) {
+        null
+    }
+}
+
+/**
+ * Opens a folder in Android's own Files app. Android has no way to point at
+ * one file inside it, so the folder is opened and the file is listed there.
+ */
+private fun openFolder(ctx: Context, relativePath: String) {
+    val docId = "primary:" + relativePath.trim('/')
+    val uri = android.provider.DocumentsContract.buildDocumentUri("com.android.externalstorage.documents", docId)
+    try {
+        ctx.startActivity(
+            Intent(Intent.ACTION_VIEW)
+                .setDataAndType(uri, android.provider.DocumentsContract.Document.MIME_TYPE_DIR)
+                .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
+        )
+    } catch (_: Exception) {
+        ErrorLog.notice("Couldn't open the Files app. The file is in Internal storage/${relativePath.trim('/')}/.")
+    }
+}
+
 private fun play(ctx: Context, p: Library.Piece) {
     try {
         ctx.startActivity(
@@ -461,19 +623,27 @@ private fun play(ctx: Context, p: Library.Piece) {
     }
 }
 
-private fun share(ctx: Context, s: Library.Session) {
-    val uris = ArrayList<Uri>(s.pieces.map { it.uri })
+private fun share(ctx: Context, s: Library.Session) = share(ctx, listOf(s))
+
+private fun share(ctx: Context, sessions: List<Library.Session>) {
+    val uris = ArrayList<Uri>(sessions.flatMap { it.pieces }.map { it.uri })
     if (uris.isEmpty()) return
     val intent = if (uris.size == 1) {
         Intent(Intent.ACTION_SEND).putExtra(Intent.EXTRA_STREAM, uris[0])
     } else {
         Intent(Intent.ACTION_SEND_MULTIPLE).putParcelableArrayListExtra(Intent.EXTRA_STREAM, uris)
     }
-    intent.type = if (s.isAudio) "audio/*" else "video/*"
+    val allAudio = sessions.all { it.isAudio }
+    val allVideo = sessions.none { it.isAudio }
+    intent.type = when {
+        allAudio -> "audio/*"
+        allVideo -> "video/*"
+        else -> "*/*"
+    }
     intent.clipData = ClipData.newRawUri(null, uris[0]).apply { for (u in uris.drop(1)) addItem(ClipData.Item(u)) }
     intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
     try {
-        ctx.startActivity(Intent.createChooser(intent, "Share recording"))
+        ctx.startActivity(Intent.createChooser(intent, if (uris.size == 1) "Share recording" else "Share ${uris.size} files"))
     } catch (_: Exception) {
     }
 }
