@@ -32,7 +32,7 @@ import com.israel.quickrecord.R
 import com.israel.quickrecord.Sizes
 
 /** Where "Report a problem" goes. */
-private const val ISSUES_URL = "https://github.com/yair-654/yairs-kav-extensions/issues"
+private const val ISSUES_URL = "https://github.com/yair-654/quickrecord/issues"
 
 /** Which choice dialog is open. */
 private enum class Pick { CAMERA, RES, FPS, QUALITY, CODEC, PIECE, AUTOSTOP, MINFREE, BATTERY }
@@ -237,7 +237,7 @@ private fun AboutBlock() {
         Column(Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
             Text("QuickRecord $version", style = MaterialTheme.typography.titleSmall)
             Text(
-                "No internet access, no accounts, no tracking. Everything stays on this phone until you share it.",
+                "No internet access, no accounts, no tracking. Everything stays on this phone until you share it.\n\nOpen source under the GNU GPL v3. Icons: Material Icons by Google (Apache 2.0).",
                 style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
