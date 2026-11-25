@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">QuickRecord</string>
+    <string name="tile_label">QuickRecord</string>
+
+    <string name="button_service_label">QuickRecord button shortcut</string>
+    <string name="button_service_summary">Start and stop recording with the volume buttons</string>
+    <string name="button_service_description">QuickRecord uses this only to notice your volume button gesture (for example three quick presses of Volume Down) and start or stop a recording. It does not read your screen, your messages or anything you type, and it never changes how your volume buttons work: the volume still goes up and down as usual. QuickRecord has no internet access.</string>
+
+    <string name="notif_channel_recording">Recording</string>
+    <string name="notif_channel_recording_desc">Shown while QuickRecord is recording. Silent.</string>
+</resources>

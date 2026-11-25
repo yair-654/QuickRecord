@@ -1,3 +1,21 @@
+// Top-level build file.
+//
+// AGP 9 compiles Kotlin by itself ("built-in Kotlin"). The Compose compiler
+// plugin must have exactly the same version as the Kotlin Gradle plugin, so
+// both are pinned here from one variable. If a build ever fails with a
+// "Compose compiler / Kotlin version mismatch" message, change only this line.
+buildscript {
+    ext.kotlin_version = '2.4.10'
+    repositories {
+        google()
+        mavenCentral()
+    }
+    dependencies {
+        classpath "org.jetbrains.kotlin:kotlin-gradle-plugin:$kotlin_version"
+        classpath "org.jetbrains.kotlin.plugin.compose:org.jetbrains.kotlin.plugin.compose.gradle.plugin:$kotlin_version"
+    }
+}
+
 plugins {
     id 'com.android.application' version '9.4.1' apply false
 }
