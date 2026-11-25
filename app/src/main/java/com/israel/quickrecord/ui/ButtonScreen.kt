@@ -227,7 +227,9 @@ private fun openAccessibility(ctx: Context) {
     val me = ComponentName(ctx, ButtonService::class.java).flattenToString()
     try {
         ctx.startActivity(
-            Intent(Settings.ACTION_ACCESSIBILITY_DETAILS_SETTINGS)
+            // Opens QuickRecord's own page in Accessibility settings. Android
+            // doesn't publish a name for this request, so it is written out.
+            Intent("android.settings.ACCESSIBILITY_DETAILS_SETTINGS")
                 .putExtra(Intent.EXTRA_COMPONENT_NAME, me)
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         )
