@@ -1,9 +1,7 @@
 package com.israel.quickrecord
 
-import android.content.ComponentName
 import android.os.Handler
 import android.os.Looper
-import android.service.quicksettings.TileService
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
@@ -64,12 +62,7 @@ object RecorderState {
             val before = status
             Editor.block()
             statusNow = status
-            if (before != status) App.instance.let { app ->
-                try {
-                    TileService.requestListeningState(app, ComponentName(app, QRTileService::class.java))
-                } catch (_: Exception) {
-                }
-            }
+            if (before != status) QRTileService.stateChanged(App.instance)
         }
         if (Looper.myLooper() == Looper.getMainLooper()) run.run() else main.post(run)
     }

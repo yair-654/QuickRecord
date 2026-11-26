@@ -1,6 +1,8 @@
 package com.israel.quickrecord
 
 import android.app.PendingIntent
+import android.content.ComponentName
+import android.content.Context
 import android.content.Intent
 import android.graphics.drawable.Icon
 import android.service.quicksettings.Tile
@@ -9,6 +11,28 @@ import com.israel.quickrecord.ui.MainActivity
 
 /** The Quick Settings tile: tap to start, tap again to stop. Works on the lock screen. */
 class QRTileService : TileService() {
+
+    companion object {
+        /** The tile while it is on screen (Quick Settings open). Main thread only. */
+        private var showing: QRTileService? = null
+
+        /**
+         * Called on the main thread whenever the recording state changes.
+         * While the tile is on screen Android won't ask it to redraw again,
+         * so it redraws itself; otherwise Android is asked to refresh it.
+         */
+        fun stateChanged(context: Context) {
+            val tile = showing
+            if (tile != null) {
+                tile.refresh()
+            } else {
+                try {
+                    requestListeningState(context, ComponentName(context, QRTileService::class.java))
+                } catch (_: Exception) {
+                }
+            }
+        }
+    }
 
     override fun onTileAdded() {
         super.onTileAdded()
@@ -23,7 +47,18 @@ class QRTileService : TileService() {
 
     override fun onStartListening() {
         super.onStartListening()
+        showing = this
         refresh()
+    }
+
+    override fun onStopListening() {
+        if (showing === this) showing = null
+        super.onStopListening()
+    }
+
+    override fun onDestroy() {
+        if (showing === this) showing = null
+        super.onDestroy()
     }
 
     override fun onClick() {
